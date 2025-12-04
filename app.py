@@ -1,57 +1,66 @@
 import os
 import time
+import json
+import logging
+
 import requests
 import streamlit as st
+from requests.exceptions import ChunkedEncodingError
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # =========================
-# CONFIGURAÇÕES BÁSICAS
+# Configuração de logging
+# =========================
+logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
+
+# =========================
+# CONFIG BÁSICA
 # =========================
 
-API_BASE_URL = os.getenv('API_BASE_URL', 'http://163.176.236.162')  # ajuste se necessário
-CHAT_ENDPOINT = f'{API_BASE_URL}/chat'
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://163.176.236.162')
+CHAT_STREAM_ENDPOINT_DEFAULT = f'{API_BASE_URL.rstrip("/")}/chat-stream'
 
-# Você pode definir isso via .env ou direto aqui
 DEFAULT_API_KEY = os.getenv('API_KEY')
 DEFAULT_USER_ID = os.getenv('USER_ID')
-DEFAULT_OPERADORA = os.getenv('OPERADORA')
+
 # =========================
 # Página
 # =========================
 st.set_page_config(
-    page_title='Agente Híbrido SQL',
+    page_title='Consultas',
     page_icon='🚀',
     layout='wide'
 )
-st.title('Saw Chat')
+st.title('Saw Chat — Ambiente de Testes')
 
 # =========================
 # Sidebar — Configuração
 # =========================
 st.sidebar.header('Configuração da Sessão')
 
+api_base_url = st.sidebar.text_input('API Base URL', value=API_BASE_URL)
+chat_stream_endpoint = st.sidebar.text_input(
+    'Endpoint /chat-stream',
+    value=f'{api_base_url.rstrip("/")}/chat-stream'
+)
+
 api_key = st.sidebar.text_input('X-API-Key', value=DEFAULT_API_KEY, type='password')
 user_id = st.sidebar.text_input('X-User-Id', value=DEFAULT_USER_ID)
-operadora = st.sidebar.text_input('X-Operadora', value=DEFAULT_OPERADORA)
-api_base_url = st.sidebar.text_input('API Base URL', value=API_BASE_URL)
 
 st.sidebar.markdown('---')
 st.sidebar.markdown('Headers enviados para a API:')
 
 st.sidebar.code(
+    f"POST {chat_stream_endpoint}\n"
     f"X-API-Key: {api_key or '...'}\n"
-    f"X-User-Id: {user_id}\n"
-    f"X-Operadora: {operadora}",
+    f"X-User-Id: {user_id}",
     language='bash'
 )
 
 if not api_key:
     st.warning('⚠ Defina a X-API-Key na barra lateral para usar o agente.')
-
-# Atualiza o endpoint caso o usuário mude a URL
-CHAT_ENDPOINT = f'{api_base_url.rstrip("/")}/chat'
 
 # =========================
 # Estado de conversa
@@ -63,18 +72,19 @@ st.session_state.setdefault('history', [])
 # Última SQL usada
 st.session_state.setdefault('last_sql', None)
 
-# Controle de UI (inspirado no app original)
+# Controle de UI
 st.session_state.setdefault('show_suggestions', True)
 st.session_state.setdefault('is_processing', False)
 st.session_state.setdefault('pending_prompt', None)
 
-# Atualiza flag de sugestões: se já houve user, não mostra mais
-if any(m.get('role') == 'user' for m in st.session_state['history']):
+# Se já houve alguma pergunta, não mostra mais sugestões
+if any(msg.get('role') == 'user' for msg in st.session_state.history):
     st.session_state.show_suggestions = False
 
 # =========================
-# Input SEMPRE visível (desabilita durante processamento)
+# Input do chat (sempre visível)
 # =========================
+
 user_typed = st.chat_input(
     'Qual sua pergunta sobre os dados?',
     key='chat_box',
@@ -88,20 +98,22 @@ if user_typed and not st.session_state.is_processing and api_key:
     st.rerun()
 
 # =========================
-# Sugestões rápidas (top buttons)
+# Sugestões rápidas
 # =========================
+
 st.subheader('Sugestões rápidas')
 
-cols = st.columns(5)
 COMMON_QUESTIONS = [
     'Quantas consultas foram feitas hoje?',
     'Qual foi a média de consultas nesse mês?',
     'Qual é o ranking de especialidades no mês anterior?',
-    'Qual a média de idade nos últimos 3 meses?',
-    'Top 5 especialidades médicas por sexo no mês anterior'
+    'Valor total de consultas por prestador nos últimos 7 dias.',
+    'Top 5 especialidades médicas por sexo no mês anterior',
 ]
 
-if st.session_state.show_suggestions:
+cols = st.columns(len(COMMON_QUESTIONS))
+
+if st.session_state.show_suggestions and api_key:
     for i, q in enumerate(COMMON_QUESTIONS):
         if cols[i].button(q, use_container_width=True, key=f'quick_q_{i}'):
             st.session_state.pending_prompt = q
@@ -112,116 +124,149 @@ if st.session_state.show_suggestions:
 # =========================
 # Render do histórico (sem steps / sem SQL)
 # =========================
+
 for message in st.session_state.history:
     role = message.get('role')
     content = message.get('content')
 
-    if content is None or str(content).strip().lower() == 'none' or str(content).strip() == '':
+    if not content:
         continue
 
     with st.chat_message(role):
         st.markdown(content)
 
 # =========================
-# Processamento da pending_prompt
+# Processamento da pending_prompt (chamada /chat-stream)
 # =========================
+
 if st.session_state.is_processing and st.session_state.pending_prompt is not None and api_key:
     prompt = st.session_state.pending_prompt
 
-    # Adiciona mensagem do usuário ao histórico
+    # 1) Adiciona mensagem do usuário ao histórico
     st.session_state.history.append({'role': 'user', 'content': prompt})
 
-    # Mostra balão do usuário desta interação
+    # 2) Mostra balão do usuário desta interação
     with st.chat_message('user'):
         st.markdown(prompt)
 
-    # Balão do assistente: aqui vamos animar steps e depois mostrar resposta
+    # 3) Balão do assistente (status + resposta em streaming)
     with st.chat_message('assistant'):
         status = st.status('Analisando... 🧠', expanded=True)
 
         try:
-            # Monta payload com history
+            # Monta payload
             payload = {
                 'prompt': prompt,
-                'history': st.session_state.history  # histórico todo
+                'history': st.session_state.history,  # histórico todo
             }
 
             headers = {
                 'Content-Type': 'application/json',
                 'X-API-Key': api_key,
                 'X-User-Id': user_id,
-                'X-Operadora': operadora,
             }
 
-            # Chamada à API
-            status.update(label='Consultando agente...', state='running')
+            status.update(label='Enviando pergunta ao agente...', state='running')
+
+            # stream=True para ler NDJSON linha a linha
             resp = requests.post(
-                CHAT_ENDPOINT,
+                chat_stream_endpoint,
                 json=payload,
                 headers=headers,
                 timeout=120,
+                stream=True,
             )
 
             if resp.status_code != 200:
+                error_body = resp.text
                 status.update(label='Erro na API', state='error')
-                st.error(f'Erro da API ({resp.status_code}): {resp.text}')
+                st.error(f'Erro da API ({resp.status_code}): {error_body}')
             else:
-                data = resp.json()
-                answer = data.get('answer', '')
-                sql = data.get('sql')
-                steps = data.get('steps', []) or []
+                # Placeholders para status e resposta
+                status_text = st.empty()       # mostra o que o agente está fazendo
+                answer_placeholder = st.empty()
 
-                st.session_state.last_sql = sql
+                answer_buffer = ""
 
-                # Placeholder interno dentro do status para timeline
-                timeline_placeholder = st.empty()
+                # Mapeamento de mensagens amigáveis por tipo de step
+                def describe_step(step: dict) -> str:
+                    stype = step.get('type', 'step')
+                    tool = step.get('tool')
 
-                ICONS = {
-                    'router': '🧭',
-                    'tool_call': '🛠️',
-                    'tool_result': '📊',
-                    'llm': '🤖',
-                }
+                    if stype == 'router':
+                        return "Entendendo qual métrica e ferramenta usar..."
+                    if stype == 'tool_call':
+                        if tool == 'get_total_consultas':
+                            return "Calculando o total de consultas..."
+                        if tool == 'get_media_consultas_diaria':
+                            return "Calculando a média diária de consultas..."
+                        if tool == 'get_ranking_especialidades':
+                            return "Montando o ranking de especialidades..."
+                        if tool == 'get_ranking_tipo_atendimento':
+                            return "Montando o ranking de tipos de prestador..."
+                        if tool == 'run_generic_text_to_sql_query':
+                            return "Gerando e executando uma consulta SQL nos dados..."
+                        return f"Utilizando a ferramenta '{tool}'..."
+                    if stype == 'tool_result':
+                        return "Resultados obtidos. Preparando explicação..."
+                    if stype == 'llm':
+                        return "Organizando ideias..."
+                    return "🔄 Processando sua solicitação..."
 
-                # Timeline cinematográfica DENTRO do balão do chat
-                timeline_so_far = []
-                for step in steps:
-                    timeline_so_far.append(step)
-                    with timeline_placeholder.container():
-                        st.markdown('**🔍 Execução passo a passo**')
-                        for s in timeline_so_far:
-                            icon = ICONS.get(s.get('type'), '🔹')
-                            line = f"{icon} **{s.get('type').upper()}**"
-                            if s.get('tool'):
-                                line += f" — `{s['tool']}`"
-                            st.markdown(line)
+                try:
+                    for raw_line in resp.iter_lines(decode_unicode=True):
+                        if not raw_line:
+                            continue
 
-                            msg = s.get('message')
-                            if msg:
-                                st.markdown(f"> {msg}")
+                        try:
+                            event = json.loads(raw_line)
+                        except Exception:
+                            logging.warning(f'Linha inválida no stream: {raw_line}')
+                            continue
 
-                            args = s.get('args')
-                            if args:
-                                with st.expander('Args', expanded=False):
-                                    st.json(args)
+                        etype = event.get('type')
 
-                    time.sleep(0.5)
+                        if etype == 'start':
+                            msg = event.get('message', 'Iniciando processamento...')
+                            status.update(label=msg, state='running')
 
-                # Finaliza status
-                status.update(label='Resposta gerada!', state='complete')
+                        elif etype == 'step':
+                            step = event.get('step', {})
+                            friendly = describe_step(step)
+                            status.update(label=friendly, state='running')
 
-                # Some com a timeline e mostra só a resposta final
-                timeline_placeholder.empty()
-                st.markdown(answer)
+                        elif etype == 'answer_delta':
+                            delta_text = event.get('text', '')
+                            if delta_text:
+                                answer_buffer += delta_text
+                                # Vai atualizando a resposta "digitando"
+                                answer_placeholder.markdown(answer_buffer)
 
-                # Guarda a resposta no histórico
-                st.session_state.history.append({'role': 'assistant', 'content': answer})
+                        elif etype == 'answer_final':
+                            final_answer = event.get('answer') or answer_buffer
+                            sql = event.get('sql')
+                            # Conclui status
+                            status.update(label='Resposta gerada!', state='complete')
+                            # Limpa status textual e mostra só a resposta final
+                            status_text.empty()
+                            answer_placeholder.markdown(final_answer)
+                            # Atualiza histórico e SQL
+                            st.session_state.history.append(
+                                {'role': 'assistant', 'content': final_answer}
+                            )
+                            st.session_state.last_sql = sql
+                            break
+
+                        time.sleep(0.05)
+
+                except ChunkedEncodingError:
+                    status.update(label='Conexão encerrada pelo servidor.', state='error')
+                    st.error('A resposta foi interrompida antes de terminar. Tente novamente.')
 
         except Exception as e:
             logging.error(f'Erro no processamento do chat: {e}', exc_info=True)
             status.update(label=f'Ocorreu um erro: {e}', state='error')
             st.error(f'Ocorreu um erro: {e}')
-
     # Limpa flags e volta para o input
     st.session_state.pending_prompt = None
     st.session_state.is_processing = False
@@ -234,7 +279,6 @@ st.markdown('---')
 st.subheader('🧾 SQL usada na última resposta')
 
 if st.session_state.last_sql:
-    # Caso você tenha compactado a SQL em uma linha no back-end, ela já vem sem \n
     st.code(st.session_state.last_sql, language='sql')
 else:
     st.caption('Nenhuma SQL registrada ainda. Faça uma pergunta que envolva dados para ver aqui.')
