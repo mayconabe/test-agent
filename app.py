@@ -23,7 +23,7 @@ API_BASE_URL = os.getenv('API_BASE_URL', 'http://163.176.236.162')
 CHAT_STREAM_ENDPOINT_DEFAULT = f'{API_BASE_URL.rstrip("/")}/chat-stream'
 
 DEFAULT_API_KEY = os.getenv('API_KEY')
-DEFAULT_USER_ID = os.getenv('USER_ID', 'uni865')
+DEFAULT_USER_ID = 'uni865'
 
 # =========================
 # Página
