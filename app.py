@@ -245,17 +245,34 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                         elif etype == 'answer_final':
                             final_answer = event.get('answer') or answer_buffer
                             sql = event.get('sql')
+
                             # Conclui status
                             status.update(label='Resposta gerada!', state='complete')
-                            # Limpa status textual e mostra só a resposta final
                             status_text.empty()
+
+                            import re
+
+                            # Use a base da API configurada na interface
+                            api_base_url = api_base_url  # ← esta variável já existe no seu app.py (sidebar)
+
+                            pattern = r"(/download/[^\s]+)"
+                            def repl(match):
+                                path = match.group(1)
+                                # Garante: http://IP/download/arquivo.csv
+                                return f"{api_base_url.rstrip('/')}{path}"
+
+                            final_answer = re.sub(pattern, repl, final_answer)
+
+                            # Mostra resposta final já corrigida
                             answer_placeholder.markdown(final_answer)
+
                             # Atualiza histórico e SQL
                             st.session_state.history.append(
                                 {'role': 'assistant', 'content': final_answer}
                             )
                             st.session_state.last_sql = sql
                             break
+
 
                         time.sleep(0.05)
 
