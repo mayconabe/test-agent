@@ -250,19 +250,6 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                             status.update(label='Resposta gerada!', state='complete')
                             status_text.empty()
 
-                            import re
-
-                            # Use a base da API configurada na interface
-                            api_base_url = api_base_url  # ← esta variável já existe no seu app.py (sidebar)
-
-                            pattern = r"(/download/[^\s]+)"
-                            def repl(match):
-                                path = match.group(1)
-                                # Garante: http://IP/download/arquivo.csv
-                                return f"{api_base_url.rstrip('/')}{path}"
-
-                            final_answer = re.sub(pattern, repl, final_answer)
-
                             # Mostra resposta final já corrigida
                             answer_placeholder.markdown(final_answer)
 
