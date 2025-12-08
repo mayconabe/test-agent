@@ -252,22 +252,22 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
 
                             import re
 
-                            # Procura uma URL de download no texto (http(s)://...csv)
-                            match = re.search(r"(https?://[^\s]+\.csv)", final_answer)
+                            # Procura UMA URL http(s)://... no texto
+                            match = re.search(r"(https?://\S+)", final_answer)
                             download_url = match.group(1) if match else None
 
-                            # Se quiser, limpa a URL do texto para não duplicar visualmente
+                            # Remove a URL crua do texto, pra não ficar feio
                             answer_text_only = final_answer
                             if download_url:
                                 answer_text_only = final_answer.replace(download_url, "").strip()
 
-                            # Mostra a resposta (sem a URL crua, se removemos acima)
+                            # Mostra o texto da resposta
                             answer_placeholder.markdown(answer_text_only)
 
-                            # Se encontrou URL de download, mostra um botão/link destacado
+                            # Se encontrou uma URL, mostra um link separado e bem visível
                             if download_url:
-                                st.markdown("")  # pular uma linha
-                                st.link_button("⬇️ Baixar relatório CSV", download_url)
+                                st.markdown("")  # linha em branco
+                                st.markdown(f"[⬇️ Baixar relatório CSV]({download_url})")
 
                             # Atualiza histórico e SQL
                             st.session_state.history.append(
