@@ -245,25 +245,42 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                         elif etype == 'answer_final':
                             final_answer = event.get('answer') or answer_buffer
                             sql = event.get('sql')
-                            download_url = event.get('download_url')  # 👈 novo
+                            download_url = event.get('download_url')  # BACKEND TRATA export_csv E JÁ MANDA AQUI
 
-                            # Conclui status
+                            # Atualiza status
                             status.update(label='Resposta gerada!', state='complete')
                             status_text.empty()
 
-                            # Mostra o texto normal que veio do backend
+                            # Mostra texto da resposta
                             answer_placeholder.markdown(final_answer)
 
-                            # Se o backend informou um download_url, mostra um link destacado
+                            # Se existir download_url → usar download_button
                             if download_url:
-                                st.markdown("")  # linha em branco
-                                st.markdown(f"[⬇️ Baixar relatório CSV]({download_url})")
+                                st.markdown("### 📄 Baixar relatório CSV")
 
-                            # Atualiza histórico e SQL
+                                # Tenta fazer download do arquivo aqui no backend do Streamlit
+                                try:
+                                    import requests
+                                    file_response = requests.get(download_url)
+                                    file_response.raise_for_status()
+                                    file_bytes = file_response.content
+
+                                    st.download_button(
+                                        label="⬇️ Download do arquivo CSV",
+                                        data=file_bytes,
+                                        file_name=download_url.split("/")[-1],
+                                        mime="text/csv",
+                                    )
+
+                                except Exception as e:
+                                    st.error(f"Erro ao baixar arquivo: {e}")
+
+                            # Atualiza histórico
                             st.session_state.history.append(
                                 {'role': 'assistant', 'content': final_answer}
                             )
                             st.session_state.last_sql = sql
+
                             break
 
                         time.sleep(0.05)
