@@ -245,26 +245,16 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                         elif etype == 'answer_final':
                             final_answer = event.get('answer') or answer_buffer
                             sql = event.get('sql')
+                            download_url = event.get('download_url')  # 👈 novo
 
                             # Conclui status
                             status.update(label='Resposta gerada!', state='complete')
                             status_text.empty()
 
-                            import re
+                            # Mostra o texto normal que veio do backend
+                            answer_placeholder.markdown(final_answer)
 
-                            # Procura UMA URL http(s)://... no texto
-                            match = re.search(r"(https?://\S+)", final_answer)
-                            download_url = match.group(1) if match else None
-
-                            # Remove a URL crua do texto, pra não ficar feio
-                            answer_text_only = final_answer
-                            if download_url:
-                                answer_text_only = final_answer.replace(download_url, "").strip()
-
-                            # Mostra o texto da resposta
-                            answer_placeholder.markdown(answer_text_only)
-
-                            # Se encontrou uma URL, mostra um link separado e bem visível
+                            # Se o backend informou um download_url, mostra um link destacado
                             if download_url:
                                 st.markdown("")  # linha em branco
                                 st.markdown(f"[⬇️ Baixar relatório CSV]({download_url})")
