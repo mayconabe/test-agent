@@ -250,8 +250,24 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                             status.update(label='Resposta gerada!', state='complete')
                             status_text.empty()
 
-                            # Mostra resposta final já corrigida
-                            answer_placeholder.markdown(final_answer)
+                            import re
+
+                            # Procura uma URL de download no texto (http(s)://...csv)
+                            match = re.search(r"(https?://[^\s]+\.csv)", final_answer)
+                            download_url = match.group(1) if match else None
+
+                            # Se quiser, limpa a URL do texto para não duplicar visualmente
+                            answer_text_only = final_answer
+                            if download_url:
+                                answer_text_only = final_answer.replace(download_url, "").strip()
+
+                            # Mostra a resposta (sem a URL crua, se removemos acima)
+                            answer_placeholder.markdown(answer_text_only)
+
+                            # Se encontrou URL de download, mostra um botão/link destacado
+                            if download_url:
+                                st.markdown("")  # pular uma linha
+                                st.link_button("⬇️ Baixar relatório CSV", download_url)
 
                             # Atualiza histórico e SQL
                             st.session_state.history.append(
@@ -259,7 +275,6 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                             )
                             st.session_state.last_sql = sql
                             break
-
 
                         time.sleep(0.05)
 
