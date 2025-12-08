@@ -2,6 +2,7 @@ import os
 import time
 import json
 import logging
+import re
 
 import requests
 import streamlit as st
@@ -128,12 +129,34 @@ if st.session_state.show_suggestions and api_key:
 for message in st.session_state.history:
     role = message.get('role')
     content = message.get('content')
+    # Tenta pegar a URL salva nesta mensagem (se houver)
+    download_url = message.get('download_url') 
 
     if not content:
         continue
 
     with st.chat_message(role):
         st.markdown(content)
+        
+        # --- NOVO TRECHO: Se houver link salvo, redesenha o botão ---
+        if download_url:
+            btn_html = f"""
+            <div style="margin-top: 10px; margin-bottom: 10px;">
+                <a href="{download_url}" target="_blank" style="text-decoration: none;">
+                    <button style="
+                        background-color: #FF4B4B; 
+                        color: white; 
+                        border: none; 
+                        padding: 8px 16px; 
+                        border-radius: 5px; 
+                        cursor: pointer;
+                        font-weight: bold;">
+                        ⬇️ Baixar CSV
+                    </button>
+                </a>
+            </div>
+            """
+            st.markdown(btn_html, unsafe_allow_html=True)
 
 # =========================
 # Processamento da pending_prompt (chamada /chat-stream)
@@ -245,43 +268,58 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                         elif etype == 'answer_final':
                             final_answer = event.get('answer') or answer_buffer
                             sql = event.get('sql')
-                            download_url = event.get('download_url')  # BACKEND TRATA export_csv E JÁ MANDA AQUI
+                            
+                            # 1. Tenta pegar a URL oficial (do backend)
+                            download_url = event.get('download_url')
 
-                            # Atualiza status
+                            # 2. FALLBACK: Se o backend não mandou a chave, procura link no texto via REGEX
+                            if not download_url and final_answer:
+                                # Procura strings começando com http/https
+                                match = re.search(r'(https?://[^\s]+)', final_answer)
+                                if match:
+                                    download_url = match.group(0)
+                                    # Remove pontuação final (ex: ponto final da frase)
+                                    download_url = download_url.rstrip('.,;:')
+                                    print(f"DEBUG: Link encontrado no texto: {download_url}")
+
+                            # Atualiza status visual
                             status.update(label='Resposta gerada!', state='complete')
                             status_text.empty()
 
-                            # Mostra texto da resposta
+                            # Mostra o texto final
                             answer_placeholder.markdown(final_answer)
 
-                            # Se existir download_url → usar download_button
+                            # 3. MOSTRA O BOTÃO "AO VIVO" (Antes do Rerun)
                             if download_url:
-                                st.markdown("### 📄 Baixar relatório CSV")
+                                btn_html = f"""
+                                <div style="margin-top: 10px; margin-bottom: 10px;">
+                                    <a href="{download_url}" target="_blank" style="text-decoration: none;">
+                                        <button style="
+                                            background-color: #FF4B4B; 
+                                            color: white; 
+                                            border: none; 
+                                            padding: 8px 16px; 
+                                            border-radius: 5px; 
+                                            cursor: pointer;
+                                            font-weight: bold;">
+                                            ⬇️ Baixar Relatório CSV
+                                        </button>
+                                    </a>
+                                </div>
+                                """
+                                # Renderiza logo abaixo do texto
+                                st.markdown(btn_html, unsafe_allow_html=True)
 
-                                # Tenta fazer download do arquivo aqui no backend do Streamlit
-                                try:
-                                    import requests
-                                    file_response = requests.get(download_url)
-                                    file_response.raise_for_status()
-                                    file_bytes = file_response.content
-
-                                    st.download_button(
-                                        label="⬇️ Download do arquivo CSV",
-                                        data=file_bytes,
-                                        file_name=download_url.split("/")[-1],
-                                        mime="text/csv",
-                                    )
-
-                                except Exception as e:
-                                    st.error(f"Erro ao baixar arquivo: {e}")
-
-                            # Atualiza histórico
-                            st.session_state.history.append(
-                                {'role': 'assistant', 'content': final_answer}
-                            )
+                            # 4. SALVA NO HISTÓRICO COM A URL (Crucial para não sumir)
+                            st.session_state.history.append({
+                                'role': 'assistant', 
+                                'content': final_answer,
+                                'download_url': download_url  # <--- Salva a URL para a Parte 1 usar depois
+                            })
+                            
                             st.session_state.last_sql = sql
 
-                            break
+                            break # Sai do loop e o Streamlit fará o Rerun automaticamente
 
                         time.sleep(0.05)
 
