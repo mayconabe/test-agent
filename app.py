@@ -34,11 +34,12 @@ st.set_page_config(
     page_icon='🚀',
     layout='wide'
 )
-st.title('Saw Chat — Ambiente de Testes')
+st.title('FAIQ')
 
 # =========================
 # Sidebar — Configuração
 # =========================
+st.sidebar.image('trix-logo-nobg.png', use_container_width=True)
 st.sidebar.header('Configuração da Sessão')
 
 api_base_url = st.sidebar.text_input('API Base URL', value=API_BASE_URL)
@@ -174,7 +175,7 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
 
     # 3) Balão do assistente (status + resposta em streaming)
     with st.chat_message('assistant'):
-        status = st.status('Inciando Processamento...', expanded=True)
+        status = st.status('Analisando... 🧠', expanded=True)
 
         try:
             # Monta payload
@@ -188,6 +189,8 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                 'X-API-Key': api_key,
                 'X-User-Id': user_id,
             }
+
+            status.update(label='Enviando pergunta ao agente...', state='running')
 
             # stream=True para ler NDJSON linha a linha
             resp = requests.post(
@@ -266,53 +269,58 @@ if st.session_state.is_processing and st.session_state.pending_prompt is not Non
                         elif etype == 'answer_final':
                             final_answer = event.get('answer') or answer_buffer
                             sql = event.get('sql')
-
-                            # 1) download_url (backend -> fallback regex)
+                            
+                            # 1. Tenta pegar a URL oficial (do backend)
                             download_url = event.get('download_url')
+
+                            # 2. FALLBACK: Se o backend não mandou a chave, procura link no texto via REGEX
                             if not download_url and final_answer:
+                                # Procura strings começando com http/https
                                 match = re.search(r'(https?://[^\s]+)', final_answer)
                                 if match:
-                                    download_url = match.group(0).rstrip('.,;:')
+                                    download_url = match.group(0)
+                                    # Remove pontuação final (ex: ponto final da frase)
+                                    download_url = download_url.rstrip('.,;:')
+                                    print(f"DEBUG: Link encontrado no texto: {download_url}")
 
-                            # Status final
+                            # Atualiza status visual
                             status.update(label='Resposta gerada!', state='complete')
                             status_text.empty()
 
-                            # Mostra resposta
+                            # Mostra o texto final
                             answer_placeholder.markdown(final_answer)
 
-                            # Botão/link de download (se houver)
+                            # 3. MOSTRA O BOTÃO "AO VIVO" (Antes do Rerun)
                             if download_url:
                                 btn_html = f"""
                                 <div style="margin-top: 10px; margin-bottom: 10px;">
                                     <a href="{download_url}" target="_blank" style="text-decoration: none;">
                                         <button style="
-                                            background-color: #FF4B4B;
-                                            color: white;
-                                            border: none;
-                                            padding: 8px 16px;
-                                            border-radius: 5px;
+                                            background-color: #FF4B4B; 
+                                            color: white; 
+                                            border: none; 
+                                            padding: 8px 16px; 
+                                            border-radius: 5px; 
                                             cursor: pointer;
                                             font-weight: bold;">
-                                            ⬇️ Baixar Relatório
+                                            ⬇️ Baixar Relatório CSV
                                         </button>
                                     </a>
                                 </div>
                                 """
+                                # Renderiza logo abaixo do texto
                                 st.markdown(btn_html, unsafe_allow_html=True)
 
-                            # Salva no histórico
+                            # 4. SALVA NO HISTÓRICO COM A URL (Crucial para não sumir)
                             st.session_state.history.append({
-                                'role': 'assistant',
+                                'role': 'assistant', 
                                 'content': final_answer,
-                                'download_url': download_url
+                                'download_url': download_url  # <--- Salva a URL para a Parte 1 usar depois
                             })
+                            
+                            st.session_state.last_sql = sql
 
-                            # 2) NÃO zera SQL se vier None
-                            if sql:
-                                st.session_state.last_sql = sql
-
-                            break
+                            break # Sai do loop e o Streamlit fará o Rerun automaticamente
 
                         time.sleep(0.05)
 
